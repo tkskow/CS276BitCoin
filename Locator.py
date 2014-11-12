@@ -1,14 +1,15 @@
 from blockchain import blockexplorer, exceptions
+from collections import OrderedDict
 import requests, json, pymongo
  
-
 location_service_url = "http://www.geoplugin.net/json.gp?ip="
+sort_order = ["geoplugin_request","geoplugin_city", "geoplugin_longitude", "geoplugin_latitude", "geoplugin_region", "geoplugin_regionName", "geoplugin_countryCode", "geoplugin_countryName", "geoplugin_continentCode", "geoplugin_regionCode", "geoplugin_areaCode", "geoplugin_dmaCode"]
+
 
 dickRelay = {}
 dickInitial ={}
 
-
-def checkBlock(block):
+def check_block(block):
 
 	skip = True
 	for transaction in block.transactions:
@@ -17,7 +18,6 @@ def checkBlock(block):
 			skip = False
 		else:
 			relayed_by = transaction.relayed_by
-			print "### RELAYED BY: ",relayed_by
 
 			if not relayed_by in dickRelay:
 				dickRelay[relayed_by] = 1
@@ -33,44 +33,49 @@ def checkBlock(block):
 				else:
 					dickInitial[initial_ip] += 1
 
-
-				#print "Relayed by: {0} Initial ip: {1}".format(relayed_by, inv.initial_ip)
-				#print "Relay information: init_time: {0} relayed_count: {1} relayed_percent: {2}".format(inv.initial_time, inv.relayed_count, inv.relayed_percent)
-				
 			except Exception, e:
 				print e
 
+def add_to_database():
+	client = pymongo.MongoClient('localhost', 27017)
 
-def get_location_json():
+	connection = client['mynewdb']
 
-	for ip in dickRelay:
-		print "Relayed_by: {0} Count: {1}".format(ip, dickRelay[ip])
-
+	db = connection.delete.testdata
 
 	for ip in sorted(dickInitial, key=dickInitial.get, reverse=True):
-		print "Initial_ip: {0} Count: {1}".format(ip, dickInitial[ip])
 
 		response = requests.get(location_service_url + ip)
 		data = response.json()
+		db.insert(format_geotag(data))
 
-		print data
+	client.close()
+
+def format_geotag(existing):
+
+	existing.pop("geoplugin_currencyConverter")
+	existing.pop("geoplugin_currencySymbol")
+	existing.pop("geoplugin_currencySymbol_UTF8")
+	existing.pop("geoplugin_credit")
+	existing.pop("geoplugin_currencyCode")
+	existing.pop("geoplugin_status")
+
+	orderedJson = OrderedDict()
+
+	for item in sorted(existing.iteritems(), key=lambda (k, v): sort_order.index(k)):
+		orderedJson[item[0]] = item[1]
+	
+	return orderedJson
 
 
-def database():
-	client = pymongo.MongoClient()
 
+latest_block = blockexplorer.get_latest_block()
 
+block = blockexplorer.get_block(str(latest_block.block_index))
 
+check_block(block)
 
-#latest_block = blockexplorer.get_latest_block()
-
-#block = blockexplorer.get_block(str(latest_block.block_index))
-
-#checkBlock(block)
-
-
-
-database()
+add_to_database()
 
 
 
