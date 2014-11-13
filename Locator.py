@@ -1,6 +1,6 @@
 from blockchain import blockexplorer, exceptions
 from collections import OrderedDict
-import requests, json, pymongo, datetime, time
+import requests, json, pymongo, datetime, time, ssl, logging, os
  
 LATEST_HASH_URL = "https://blockchain.info/q/latesthash"
 LOCATION_SERVICE_URL = "http://www.geoplugin.net/json.gp?ip="
@@ -37,14 +37,24 @@ def traverse_block(block):
 				else:
 					INITIAL_IPS[initial_ip] += 1
 
-			except Exception, e:
-				print e
+			except ssl.SSLError, e:
+				pass
+
+			except exceptions.APIException, e:
+				pass
+
+			except requests.exceptions.ConnectionError, e:
+				pass
 
 def create_document(ip_address, ip_count):
-
-	# query geolocation about location of ip address
+	# query geoplugin about location of ip address
 	response = requests.get(LOCATION_SERVICE_URL + ip_address)
-	document = response.json()
+
+	try:
+		document = response.json()
+	except ValueError, e:
+		logger.debug("Response from GeoLogin: 403 None. Bitch got blacklisted.")
+		return None
 
 	# remove stupid stuff
 	document.pop("geoplugin_currencyConverter")
@@ -54,25 +64,38 @@ def create_document(ip_address, ip_count):
 	document.pop("geoplugin_currencyCode")
 	document.pop("geoplugin_status")
 
-	orderedJson = OrderedDict()
+	ordered_document = OrderedDict()
 	for item in sorted(document.iteritems(), key=lambda (k, v): SORT_ORDER.index(k)):
-		orderedJson[item[0]] = item[1]
+		ordered_document[item[0]] = item[1]
 	
 	# add count and timestamp
-	orderedJson["count"] = str(ip_count)
-	orderedJson["last_updated"] = str(datetime.datetime.utcnow())
+	ordered_document["count"] = str(ip_count)
+	ordered_document["last_updated"] = str(datetime.datetime.utcnow())
 	
-	return orderedJson
+	return ordered_document
 
 def update_database():
 	client = pymongo.MongoClient('localhost', 27017)
+	logger.info("Database opened.")
 	connection = client['mynewdb']
 	db_collection = connection.testdocuments
+
+	spam_counter = 1
+	spam_warning = 115
 
 	for ip in sorted(INITIAL_IPS, key=INITIAL_IPS.get, reverse=True):
 		ip_count = INITIAL_IPS[ip]
 
+		# ninjahack to avoid getting blacklisted by GeoPlugin
+		if(spam_counter > spam_warning):
+			time.sleep(60)
+			spam_counter = 1
+
 		document = create_document(ip, ip_count)
+
+		if document is None:
+			logger.debug("Skipped {0}".format(ip))
+			continue
 
 		existing_document = db_collection.find( { "geoplugin_request" : str(ip) } ).limit(1)	
 
@@ -84,23 +107,26 @@ def update_database():
 				{ "$set":
 					{
 						'count' : str(int(current_count) + int(ip_count)),
-						'last_updated' : document['last_updated']
+						'last_updated' : str(datetime.datetime.utcnow())
 					}
 				})
 		else:
 			# add ip to database with count
-			db_collection.insert(document_formatted)
+			db_collection.insert(document)
 
 	client.close()
+	logger.info("Database closed.")
 
 def wait_for_new_block():
+	global LATEST_BLOCK_HASH
 
 	response = requests.get(LATEST_HASH_URL)
 	latest_hash = response.text
 
 	while(latest_hash == LATEST_BLOCK_HASH):
+		logger.info("No new hash... goes to sleep for 5 minutes ... ")
 		# Sleep for how long?
-		time.sleep(480) # 8 minutes?
+		time.sleep(300) # 5 minutes?
 		response = requests.get(LATEST_HASH_URL)
 		latest_hash = response.text
 
@@ -110,22 +136,46 @@ def clean_up():
 	INITIAL_IPS = {}
 	RELAYED_BY_IPS = {}
 
+def init_logging():
+    # Set logging format
+
+    logfile = "error{0}.log".format(str(datetime.datetime.utcnow()))
+    normal_log_format='[%(asctime)s][%(levelname)s] %(message)s'
+    
+    try:
+        os.unlink(logfile)
+    except OSError:
+        pass
+    logging.basicConfig(level=logging.DEBUG,format=normal_log_format,filename=logfile)
+    logger = logging.getLogger()
+    fileh = logging.FileHandler(logfile)
+    fileh.formatter = logging.Formatter(fmt=normal_log_format)
+    #logger.addHandler(fileh)
+    return logger
+
 def main():
 
 	testrun = 0
-	while(testrun > 10):
+
+	while(testrun < 10):
+		logger.info("... Starting new testrun ...")
+		logger.info("... Looking for new hash ...")
 		wait_for_new_block()
+		logger.info("New hash found: {0}".format(LATEST_BLOCK_HASH))
+		try:
+			latest_block = blockexplorer.get_block(LATEST_BLOCK_HASH)
+			traverse_block(latest_block)
+			update_database()
+			clean_up()
+			logger.info("Run completed.")
+		except ssl.SSLError, e:
+			logger.debug("SSLError! {0}".format(e))
+			logger.info("Run failed.")
+		finally:
+			testrun += 1
 
-		latest_block = blockexplorer.get_block(LATEST_BLOCK_HASH)
-
-		traverse_block(latest_block)
-
-		update_database()
-
-		clean_up()
-
-		testrun += 1
-
+logger = init_logging()
 
 main()
+
 
