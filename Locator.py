@@ -51,8 +51,9 @@ def handle_inventory_data(transaction):
 
 		except exceptions.APIException, e:
 
-			if "no inventory data" in e:
-				current = 10
+			if "No inventory information available." in e:
+				logger.debug("No inventory information available. Moving on.")
+				return
 			else:
 				logger.debug("Blockchain - APIException. Current try = {0}".format(current))
 
@@ -111,9 +112,9 @@ def update_database():
 
 		# ninjahack to avoid getting blacklisted by GeoPlugin
 		if(spam_counter > spam_warning):
+			logger.info("Sleeping for 60 seconds to prevent spamming GeoPlugin.")
 			time.sleep(60)
 			spam_counter = 1
-			logger.info("Sleeping for 60 seconds to prevent spamming GeoPlugin.")
 
 		document = create_document(ip, ip_count)
 
@@ -203,5 +204,7 @@ def main():
 logger = init_logging()
 
 main()
+
+
 
 
