@@ -14,8 +14,11 @@ tx1 = block1.transactions
 
 ipaddressesInput = []
 ipaddressesOutput = []
+communicationBetweenTwoNodes = {}
 
-for i in range(index, 329580, -1):
+f = open("test.txt", 'w')
+
+for i in range(index, 329620, -1):
 	block2 = blockexplorer.get_block(str(i))
 	tx2 = block2.transactions
 	skip1 = True
@@ -34,13 +37,19 @@ for i in range(index, 329580, -1):
 					for z in inputs:
 						for b in outputs:
 							if z.address == b.address:
-								try:
-									ipaddressesInput.append(x.relayed_by)
-									ipaddressesOutput.append(y.relayed_by)
-								except Exception, e:
-									print e
-
+								if not x.relayed_by + " " + y.relayed_by in communicationBetweenTwoNodes:
+									communicationBetweenTwoNodes [x.relayed_by + " " + y.relayed_by] = 1
+								else:
+									communicationBetweenTwoNodes[x.relayed_by +" " + y.relayed_by] += 1
+								ipaddressesInput.append(x.relayed_by)
+								ipaddressesOutput.append(y.relayed_by)
+								
 								#print "input address: {0}\n Output address: {1}\n".format(z.address, b.address)
 
-for x in xrange(0,len(ipaddressesOutput)):
-	print "IP address input: {0}\n IP address output: {1}".format(ipaddressesInput[x],ipaddressesOutput[x])
+#for x in xrange(0,len(ipaddressesOutput)):
+#	print "IP address input: {0}\n IP address output: {1}".format(ipaddressesInput[x],ipaddressesOutput[x])
+for i in communicationBetweenTwoNodes:
+	f.write(i + " " + str(communicationBetweenTwoNodes[i]) + "\n")
+	print "IPaddresses: {0} Count: {1}".format(i, communicationBetweenTwoNodes[i])
+
+f.close()
