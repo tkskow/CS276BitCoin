@@ -1,6 +1,6 @@
 from blockchain import blockexplorer, exceptions
 from collections import OrderedDict
-import requests, json, pymongo, datetime, time, ssl, logging, os
+import requests, json, pymongo, datetime, time, ssl, logging, os, urllib2
  
 LATEST_HASH_URL = "https://blockchain.info/q/latesthash"
 LOCATION_SERVICE_URL = "http://www.geoplugin.net/json.gp?ip="
@@ -28,23 +28,46 @@ def traverse_block(block):
 			else:
 				RELAYED_BY_IPS[relayed_by] += 1
 
-			try:
-				inv = blockexplorer.get_inventory_data(transaction.hash)
-				initial_ip = inv.initial_ip
+			handle_inventory_data(transaction)
 
-				if not initial_ip in INITIAL_IPS:
-					INITIAL_IPS[initial_ip] = 1
-				else:
-					INITIAL_IPS[initial_ip] += 1
+def handle_inventory_data(transaction):
+	max_tries = 10
+	current = 0
+	while(current < max_tries):
+		try:
+			inv = blockexplorer.get_inventory_data(transaction.hash)
+			initial_ip = inv.initial_ip
 
-			except ssl.SSLError, e:
-				pass
+			if not initial_ip in INITIAL_IPS:
+				INITIAL_IPS[initial_ip] = 1
+				return
+			else:
+				INITIAL_IPS[initial_ip] += 1
+				return
 
-			except exceptions.APIException, e:
-				pass
+		except ssl.SSLError, e:
+			logger.debug("SSL - SSLError. Current try = {0}".format(current))
+			pass
 
-			except requests.exceptions.ConnectionError, e:
-				pass
+		except exceptions.APIException, e:
+
+			if "no inventory data" in e:
+				current = 10
+			else:
+				logger.debug("Blockchain - APIException. Current try = {0}".format(current))
+
+		except requests.exceptions.ConnectionError, e:
+			logger.debug("Requests - ConnectionError. Current try = {0}".format(current))
+			pass
+
+		except urllib2.URLError:
+			logger.debug("Urllib2 - URLError. Current try = {0}".format(current))
+			pass
+
+		finally:
+			current += 1
+
+	logger.debug("Transaction {0} failed 10 times. Moving on.".format(transaction.hash))
 
 def create_document(ip_address, ip_count):
 	# query geoplugin about location of ip address
@@ -90,6 +113,7 @@ def update_database():
 		if(spam_counter > spam_warning):
 			time.sleep(60)
 			spam_counter = 1
+			logger.info("Sleeping for 60 seconds to prevent spamming GeoPlugin.")
 
 		document = create_document(ip, ip_count)
 
@@ -114,6 +138,8 @@ def update_database():
 			# add ip to database with count
 			db_collection.insert(document)
 
+		spam_counter += 1
+
 	client.close()
 	logger.info("Database closed.")
 
@@ -124,9 +150,9 @@ def wait_for_new_block():
 	latest_hash = response.text
 
 	while(latest_hash == LATEST_BLOCK_HASH):
-		logger.info("No new hash... goes to sleep for 5 minutes ... ")
+		logger.info("No new hash... goes to sleep for 3 minutes ... ")
 		# Sleep for how long?
-		time.sleep(300) # 5 minutes?
+		time.sleep(180) # 3 minutes?
 		response = requests.get(LATEST_HASH_URL)
 		latest_hash = response.text
 
